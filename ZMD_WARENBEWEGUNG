@@ -1,0 +1,719 @@
+*&---------------------------------------------------------------------*
+*& Report ZMD_WARENBEWEGUNG
+*&---------------------------------------------------------------------*
+"Dieser SAP-ABAP-Code hat den Zweck, Daten aus einer Excel-Datei zu lesen,
+"sie zu verarbeiten und dann basierend auf diesen Daten eine Warenbewebung
+"in SAP zu erstellen.  Mit den vorbereiteten Daten wird der eigentliche
+"Warenbewebung mit Hilfe der BAPI-Funktion "BAPI_GOODSMVT_CREATE erstellt.
+"Anschließend werden die Daten in einer ALV-Tabelle angezeigt, die dem Benutzer
+"ermöglicht, die Daten zu betrachten und bei Bedarf zu speichern. Der Code
+"umfasst auch die Verarbeitung von Benutzeraktionen wie das Herunterladen einer
+"Vorlage, das Speichern von Daten und die Behandlung von Fehlern während
+"des Prozesses. Insgesamt zielt der Code darauf ab, einen nahtlosen Prozess
+"zur Erstellung von Warenbewebungen aus Excel-Daten in SAP bereitzustellen.
+*&---------------------------------------------------------------------*
+REPORT zmd_warenbewegung.
+
+
+TYPE-POOLS icon.
+TABLES: pkw_rptattrib, sscrfields.
+
+TYPES : BEGIN OF ty_data,
+          field1(18),
+          field2(18),
+          field3(18),
+          field4(18),
+          field5(18),
+          field6(18),
+          field7(18),
+          field8(18),
+          field9(18),
+          field10(18),
+          field11(18),
+          field12(18),
+        END OF ty_data.
+
+DATA : gt_data TYPE TABLE OF ty_data,
+       gs_data TYPE ty_data.
+
+DATA: BEGIN OF gs_header,
+        name TYPE c LENGTH 30,
+      END OF gs_header.
+
+DATA: gt_header LIKE TABLE OF gs_header.
+
+DATA: d_butt1 TYPE char3.
+
+FIELD-SYMBOLS : <gt_data> TYPE STANDARD TABLE .
+
+DATA: gs_alv TYPE zmd_alv3,
+      gt_alv TYPE TABLE OF zmd_alv3.
+
+DATA ok_code TYPE sy-ucomm.
+DATA gc_custom_control_name TYPE scrfname VALUE 'CONTAINER'.  ""Der Name des Custom-Containers, der dem Bildschirm hinzugefügt wurde.
+
+DATA gt_fieldcat TYPE lvc_t_fcat .                            "Field-Katalog Tabelle
+DATA gs_layout TYPE lvc_s_layo .                              "Layout-Struktur
+
+DATA : gr_alv_grid       TYPE REF TO cl_gui_alv_grid.
+DATA gr_ccontainer TYPE REF TO cl_gui_custom_container.       "Referenz-Beispiel für Custom container.
+
+DATA : gr_alv_container  TYPE REF TO cl_gui_docking_container.
+
+DATA: gt_exclude TYPE ui_functions,
+      gs_exclude TYPE ui_func.
+
+
+SELECTION-SCREEN: BEGIN OF BLOCK a1 WITH FRAME TITLE TEXT-t01.
+PARAMETERS: p_file TYPE pkw_rptattrib-filename.
+SELECTION-SCREEN: END OF BLOCK a1.
+
+CLASS lcl_event_handler DEFINITION DEFERRED.
+DATA gr_event_handler TYPE REF TO lcl_event_handler .
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_event DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_event_handler DEFINITION.
+  PUBLIC SECTION .
+    METHODS:
+*hotspot control
+      handle_hotspot_click FOR EVENT hotspot_click OF cl_gui_alv_grid
+        IMPORTING e_row_id e_column_id es_row_no .
+
+ENDCLASS.                    "lcl_event DEFINITION
+*----------------------------------------------------------------------*
+*       CLASS lcl_event IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_event_handler IMPLEMENTATION.
+
+**Hotspot-Kontrolle.
+  METHOD handle_hotspot_click .
+*    PERFORM handle_hotspot_click USING e_row_id e_column_id es_row_no .
+  ENDMETHOD .                    "handle_hotspot_click
+
+ENDCLASS.                    "LCL_EVENT IMPLEMENTATION
+
+
+
+SELECTION-SCREEN FUNCTION KEY 1.
+
+INITIALIZATION.
+  MOVE 'vorlage herunterladen'(t02) TO sscrfields-functxt_01.
+  "MOVE TEXT-t02 TO sscrfields-functxt_01.
+
+  "Excel-Kopfzeilen füllen
+
+AT SELECTION-SCREEN.
+  IF sy-ucomm = 'FC01'.
+    gt_header = VALUE #( ( name = 'Belegnummer'           )
+                         ( name = 'Buchungsdatum'         )
+                         ( name = 'Belegdatum'            )
+                         ( name = 'Referenzbelegnummer'   )
+                         ( name = 'Belegkopftext'         )
+                         ( name = 'Zeilennummer'          )
+                         ( name = 'Material'              )
+                         ( name = 'Herstellungsort'       )
+                         ( name = 'Lagerort'              )
+                         ( name = 'Eingangsmenge'         )
+                         ( name = 'Einkaufsbelegnummer'   )
+                         ( name = 'Einkaufsbelegposition' ) ).
+
+    DATA: lv_fname    TYPE string,
+          lv_filename TYPE string,
+          lv_path     TYPE string,
+          lv_fullpath TYPE string.
+
+
+    CALL METHOD cl_gui_frontend_services=>file_save_dialog      "Methode zum Auswählen und Importieren des Dateipfads im Programm
+      EXPORTING
+        window_title              = 'File Direktory'
+        default_extension         = 'XLS'
+        initial_directory         = 'C:\'
+      CHANGING
+        filename                  = lv_filename
+        path                      = lv_path
+        fullpath                  = lv_fullpath
+      EXCEPTIONS
+        cntl_error                = 1
+        error_no_gui              = 2
+        not_supported_by_gui      = 3
+        invalid_default_file_name = 4
+        OTHERS                    = 5.
+
+    IF sy-subrc <> 0.
+      MESSAGE 'Sie müssen eine Datei auswählen.' TYPE 'S' DISPLAY LIKE 'E'.
+    ENDIF.
+
+    lv_fname = lv_fullpath.
+
+    CALL FUNCTION 'GUI_DOWNLOAD'                "*Excel-Datei herunterladen
+      EXPORTING
+        bin_filesize            = ''
+        filename                = lv_fname
+        filetype                = 'DAT'
+      TABLES
+        data_tab                = gt_data[]      "leere Excel-Tabelle
+        fieldnames              = gt_header[]    "Tabelle mit Excel-Kopfzeilen
+      EXCEPTIONS
+        file_write_error        = 1
+        no_batch                = 2
+        gui_refuse_filetransfer = 3
+        invalid_type            = 4
+        no_authority            = 5
+        unknown_error           = 6
+        header_not_allowed      = 7
+        separator_not_allowed   = 8
+        filesize_not_allowed    = 9
+        header_too_long         = 10
+        dp_error_create         = 11
+        dp_error_send           = 12
+        dp_error_write          = 13
+        unknown_dp_error        = 14
+        access_denied           = 15
+        dp_out_of_memory        = 16
+        disk_full               = 17
+        dp_timeout              = 18
+        file_not_found          = 19
+        dataprovider_exception  = 20
+        control_flush_error     = 21
+        OTHERS                  = 22.
+
+    IF sy-subrc IS NOT INITIAL.
+      MESSAGE 'Herunterladen ist nicht erfolgreich.' TYPE 'S' DISPLAY LIKE 'E'.
+    ENDIF.
+  ENDIF.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  CALL FUNCTION 'F4_FILENAME'
+    IMPORTING
+      file_name = p_file.
+
+START-OF-SELECTION.
+
+  "Methoden zum Auffüllen der zeichengetippten Tabelle gt_data, mit Daten aus Excel.
+  DATA: gt_row   TYPE truxs_t_text_data,
+        lv_fname TYPE rlgrap-filename.
+
+  lv_fname = p_file.                                   "lv_fname" sei die auf dem Selektionsbildschirm eingegebene Datei.
+
+
+  "Methode 1.
+  CALL FUNCTION 'TEXT_CONVERT_XLS_TO_SAP'              "IMPORTIEREN VON DATEN VOR TRANSFORMATIONEN
+    EXPORTING
+*     I_FIELD_SEPERATOR    =
+      i_line_header        = 'X'
+      i_tab_raw_data       = gt_row
+      i_filename           = lv_fname
+    TABLES
+      i_tab_converted_data = gt_data[]
+    EXCEPTIONS
+      conversion_failed    = 1
+      OTHERS               = 2.
+
+  IF sy-subrc IS NOT INITIAL.
+    MESSAGE 'Excel-Datei konnte nicht geladen werden.' TYPE 'S' DISPLAY LIKE 'E'.  "Implementieren Sie hier eine geeignete Fehlerbehandlung
+  ENDIF.
+
+
+  """"""""""""""""""""""""""""""""""
+  "Methode 2.
+*  DATA: gt_itab TYPE TABLE OF alsmex_tabline.
+*
+*  CALL FUNCTION 'ALSM_EXCEL_TO_INT ERNAL_TABLE'
+*    EXPORTING
+*      filename                = lv_fname
+*      i_begin_col             = '1'
+*      i_begin_row             = '2'
+*      i_end_col               = '10'
+*      i_end_row               = '65536'
+*    TABLES
+*      intern                  = gt_itab[]
+*    EXCEPTIONS
+*      inconsistent_parameters = 1
+*      upload_ole              = 2
+*      OTHERS                  = 3.
+*  IF sy-subrc <> 0.
+** Implement suitable error handling here
+*  ENDIF.
+*
+*  LOOP AT gt_itab INTO DATA(ls_data).
+*    ASSIGN COMPONENT ls_data-col OF STRUCTURE gs_data TO FIELD-SYMBOL(<lfs_fld>).
+*
+*    <lfs_fld> = ls_data-value.
+*    AT END OF row.
+*      APPEND gs_data TO gt_data.
+*    ENDAT.
+*  ENDLOOP.
+
+  """"""""""""""""""""""""""""""""""
+  "Methode 3
+*  DATA : lv_filename      TYPE string,
+*         lt_records       TYPE solix_tab,
+*         lv_headerxstring TYPE xstring,
+*         lv_filelength    TYPE i.
+*
+*  lv_filename = p_file.
+*
+*  CALL FUNCTION 'GUI_UPLOAD'
+*    EXPORTING
+*      filename                = lv_filename
+*      filetype                = 'BIN'
+**      has_field_separator     = 'X'
+*    IMPORTING
+*      filelength              = lv_filelength
+*      header                  = lv_headerxstring
+*    TABLES
+*      data_tab                = lt_records[]
+*    EXCEPTIONS
+*      file_open_error         = 1
+*      file_read_error         = 2
+*      no_batch                = 3
+*      gui_refuse_filetransfer = 4
+*      invalid_type            = 5
+*      no_authority            = 6
+*      unknown_error           = 7
+*      bad_data_format         = 8
+*      header_not_allowed      = 9
+*      separator_not_allowed   = 10
+*      header_too_long         = 11
+*      unknown_dp_error        = 12
+*      access_denied           = 13
+*      dp_out_of_memory        = 14
+*      disk_full               = 15
+*      dp_timeout              = 16
+*      OTHERS                  = 17.
+*
+*  CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+*    EXPORTING
+*      input_length = lv_filelength
+*    IMPORTING
+*      buffer       = lv_headerxstring
+*    TABLES
+*      binary_tab   = lt_records
+*    EXCEPTIONS
+*      failed       = 1
+*      OTHERS       = 2.
+*
+*  IF sy-subrc <> 0.
+*    "Implement suitable error handling here
+*  ENDIF.
+*
+*  DATA : lo_excel_ref TYPE REF TO cl_fdt_xl_spreadsheet .
+*
+*  TRY .
+*      lo_excel_ref = NEW cl_fdt_xl_spreadsheet(
+*                              document_name = lv_filename
+*                              xdocument     = lv_headerxstring ) .
+*    CATCH cx_fdt_excel_core.
+*      "Implement suitable error handling here
+*  ENDTRY .
+*
+*  "Get List of Worksheets
+*  lo_excel_ref->if_fdt_doc_spreadsheet~get_worksheet_names(
+*    IMPORTING
+*      worksheet_names = DATA(lt_worksheets) ).
+*
+*  IF NOT lt_worksheets IS INITIAL.
+*    READ TABLE lt_worksheets INTO DATA(lv_woksheetname) INDEX 1.
+*
+*    DATA(lo_data_ref) = lo_excel_ref->if_fdt_doc_spreadsheet~get_itab_from_worksheet(
+*                                             lv_woksheetname ).
+*    "now you have excel work sheet data in dyanmic internal table
+*    ASSIGN lo_data_ref->* TO <gt_data>.
+*  ENDIF.
+*BREAKPOINT.
+
+
+  PERFORM selec_data.
+  CALL SCREEN 300.
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0300  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0300 OUTPUT.
+  SET PF-STATUS 'STATUS_0300'.
+  SET TITLEBAR 'TITLE_0300'.
+
+  PERFORM fcat.
+  PERFORM layout.
+  PERFORM show_data.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0300  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0300 INPUT.
+  CASE ok_code.
+    WHEN 'BACK'.
+      LEAVE TO SCREEN 0.
+    WHEN 'LEAVE' OR 'EXIT'.
+      LEAVE PROGRAM.
+    WHEN 'SAVE'.
+      PERFORM save.
+  ENDCASE.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Form  SELEC_DATA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM selec_data .
+  LOOP AT gt_data INTO gs_data.
+    gs_alv-light = icon_yellow_light.
+    gs_alv-text  = 'Die Daten sind zur Aufzeichnung bereit.'.
+
+    gs_alv-mblnr = gs_data-field1.                  "Belegnummer
+*-------------------------------->                  "Buchungsdatum
+    gs_alv-budat = gs_data-field2+6(4) &&
+                   gs_data-field2+3(2) &&
+                   gs_data-field2(2).
+*-------------------------------->                  "Belegdatum
+    gs_alv-bldat = gs_data-field3+6(4) &&
+                   gs_data-field3+3(2) &&
+                   gs_data-field3(2).
+    gs_alv-xblnr = gs_data-field4.                  "Referenzbelegnummer
+    gs_alv-bktxt = gs_data-field5.                  "Belegkopftext
+*-------------------------------->                  "Zeilennummer
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = gs_data-field6
+      IMPORTING
+        output = gs_alv-zeile.
+*-------------------------------->                  "Material
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = gs_data-field7
+      IMPORTING
+        output = gs_alv-matnr.
+
+    SELECT SINGLE matnr
+      FROM mara
+      INTO @DATA(lv_matnr)
+    WHERE matnr EQ @gs_alv-matnr.
+
+    IF sy-subrc IS NOT INITIAL.
+      gs_alv-light = icon_red_light.
+      gs_alv-text  = 'Material nicht verfügbar.'.
+    ENDIF.
+
+*-------------------------------->                  "Herstellungsort
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = gs_data-field8
+      IMPORTING
+        output = gs_alv-werks.
+
+    SELECT SINGLE werks
+    FROM mseg
+    INTO @DATA(lv_werks)
+    WHERE werks EQ @gs_alv-werks.
+
+    IF sy-subrc IS NOT INITIAL.
+      gs_alv-light = icon_red_light.
+      gs_alv-text  = 'Material-Produktionsort ist nicht definiert.'.
+    ENDIF.
+
+*-------------------------------->                  "Lagerort
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = gs_data-field9
+      IMPORTING
+        output = gs_alv-lgort.
+
+    SELECT SINGLE lgort
+    FROM mseg
+    INTO @DATA(lv_lgort)
+    WHERE lgort EQ @gs_alv-lgort.
+
+    IF sy-subrc IS NOT INITIAL.
+      gs_alv-light = icon_red_light.
+      gs_alv-text  = 'Material-Produktionsstandort-Lager ist nicht definiert.'.
+    ENDIF.
+
+    TRANSLATE gs_data-field10 USING ',.'.
+    gs_alv-menge = gs_data-field10.                   "Eingangsmenge
+
+*-------------------------------->                    "Einkaufsbelegnummer
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = gs_data-field11
+      IMPORTING
+        output = gs_alv-ebeln.
+
+*-------------------------------->                    "Einkaufsbelegposition
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = gs_data-field12
+      IMPORTING
+        output = gs_alv-ebelp.
+
+    APPEND gs_alv TO gt_alv.
+    CLEAR: gs_alv.
+  ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  FCAT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM fcat .
+  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name       = 'ZMD_ALV3'
+    CHANGING
+      ct_fieldcat            = gt_fieldcat
+    EXCEPTIONS
+      inconsistent_interface = 1
+      program_error          = 2
+      OTHERS                 = 3.
+
+  IF sy-subrc IS NOT INITIAL.
+    MESSAGE 'Die Feldkatalogtabelle konnte nicht erstellt werden.' TYPE 'S' DISPLAY LIKE 'E'.
+  ENDIF.
+
+  LOOP AT gt_fieldcat INTO DATA(ls_fcat).
+    CASE ls_fcat-fieldname.
+      WHEN 'LIGHT'.
+        ls_fcat-icon    = 'X'.
+        ls_fcat-coltext = 'Bedingung'.
+      WHEN 'TEXT'.
+        ls_fcat-coltext = 'Nachricht'.
+    ENDCASE.
+    MODIFY gt_fieldcat FROM ls_fcat.
+    CLEAR ls_fcat.
+  ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  LAYOUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM layout .
+  gs_layout-zebra      = 'X' .
+  gs_layout-cwidth_opt = 'X'.
+  gs_layout-sel_mode   = 'A'.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  SHOW_DATA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM show_data .
+  IF gr_alv_grid IS INITIAL.
+    CREATE OBJECT gr_ccontainer
+      EXPORTING
+        container_name              = gc_custom_control_name
+      EXCEPTIONS
+        cntl_error                  = 1
+        cntl_system_error           = 2
+        create_error                = 3
+        lifetime_error              = 4
+        lifetime_dynpro_dynpro_link = 5
+        OTHERS                      = 6.
+
+    IF sy-subrc IS NOT INITIAL.
+      MESSAGE '„CONTAINER“ konnte nicht erstellt werden.' TYPE 'S' DISPLAY LIKE 'E'.
+    ENDIF.
+
+    CREATE OBJECT gr_alv_grid
+      EXPORTING
+        i_parent          = gr_ccontainer
+      EXCEPTIONS
+        error_cntl_create = 1
+        error_cntl_init   = 2
+        error_cntl_link   = 3
+        error_dp_create   = 4
+        OTHERS            = 5.
+
+    IF sy-subrc <> 0.
+      MESSAGE '„CONTAINER“ konnte nicht erstellt werden.' TYPE 'S' DISPLAY LIKE 'E'.
+    ENDIF.
+
+    CALL METHOD gr_alv_grid->set_table_for_first_display
+      EXPORTING
+        is_layout                     = gs_layout
+*       IS_PRINT                      =
+*       IT_SPECIAL_GROUPS             =
+*       it_toolbar_excluding          = gt_exclude
+*       it_hyperlink                  = gt_hyper
+      CHANGING
+        it_outtab                     = gt_alv[]
+        it_fieldcatalog               = gt_fieldcat
+*       IT_SORT                       =
+*       IT_FILTER                     =
+      EXCEPTIONS
+        invalid_parameter_combination = 1
+        program_error                 = 2
+        too_many_lines                = 3
+        OTHERS                        = 4.
+
+    IF sy-subrc IS NOT INITIAL.
+      MESSAGE '„ALV“ konnte nicht angezeigt werden.' TYPE 'S' DISPLAY LIKE 'E'.
+    ENDIF.
+  ELSE.
+    CALL METHOD gr_alv_grid->refresh_table_display
+      EXCEPTIONS
+        finished = 1
+        OTHERS   = 2.
+
+    IF sy-subrc IS NOT INITIAL.
+      MESSAGE 'Die Bezeichnung „ALV“ konnte nicht erneuert werden.' TYPE 'S' DISPLAY LIKE 'E'.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  SAVE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM save .
+  DATA: lv_document TYPE bapi2017_gm_head_ret-mat_doc,
+        lt_alv_tmp  TYPE TABLE OF zmd_alv3.
+  DATA: ls_header TYPE bapi2017_gm_head_01,
+        ls_code   TYPE bapi2017_gm_code,
+        lt_item   TYPE TABLE OF bapi2017_gm_item_create,
+        ls_item   TYPE bapi2017_gm_item_create,
+        lt_return TYPE TABLE OF bapiret2,
+        ls_return TYPE bapiret2.
+
+  "hataları kontrol ediyoruz.
+  LOOP AT gt_alv TRANSPORTING NO FIELDS
+                 WHERE light NE icon_yellow_light.
+    EXIT.
+  ENDLOOP.
+  IF sy-subrc = 0.
+    MESSAGE 'Die Daten enthalten Fehler.' TYPE 'E'.
+  ENDIF.
+
+  lt_alv_tmp[] = gt_alv[].
+  SORT lt_alv_tmp BY mblnr.
+  DELETE ADJACENT DUPLICATES FROM lt_alv_tmp COMPARING mblnr.
+
+  LOOP AT lt_alv_tmp INTO DATA(ls_alv_tmp).
+    CLEAR: ls_header, ls_code.
+    ls_header-pstng_date = ls_alv_tmp-budat.
+    ls_header-doc_date   = ls_alv_tmp-bldat.
+    ls_header-ref_doc_no = ls_alv_tmp-xblnr.
+    ls_header-header_txt = ls_alv_tmp-bktxt.
+
+    ls_code-gm_code = '01'.
+
+    CLEAR: lt_item, lt_return[], lv_document.
+    LOOP AT gt_alv INTO DATA(ls_alv)
+                   WHERE mblnr EQ ls_alv_tmp-mblnr.
+      ls_item-material  = ls_alv-matnr.
+      ls_item-plant     = ls_alv-werks.
+      ls_item-stge_loc  = ls_alv-lgort.
+      ls_item-move_type = '101'.
+      ls_item-entry_qnt = ls_alv-menge.
+      ls_item-po_number = ls_alv-ebeln.
+      ls_item-po_item   = ls_alv-ebelp.
+      ls_item-mvt_ind   = 'B'.
+      APPEND ls_item TO lt_item.
+      CLEAR ls_item.
+    ENDLOOP.
+
+    "mkpf-mseg tablolarına kayıt atar
+    CALL FUNCTION 'BAPI_GOODSMVT_CREATE'
+      EXPORTING
+        goodsmvt_header  = ls_header
+        goodsmvt_code    = ls_code
+*       TESTRUN          = ' '
+*       GOODSMVT_REF_EWM =
+      IMPORTING
+*       GOODSMVT_HEADRET =
+        materialdocument = lv_document
+*       MATDOCUMENTYEAR  =
+      TABLES
+        goodsmvt_item    = lt_item
+*       GOODSMVT_SERIALNUMBER         =
+        return           = lt_return
+*       GOODSMVT_SERV_PART_DATA       =
+*       EXTENSIONIN      =
+      .
+***************************************
+    "Prüfen, ob eine Fehlermeldung in der Rückgabetabelle vorliegt.
+*    READ TABLE lt_return WITH KEY type = 'S' INTO ls_return.
+    LOOP AT lt_return INTO ls_return WHERE type CA 'EAX'.
+      EXIT.
+    ENDLOOP.
+    IF sy-subrc = 0."hatalı kayıt mevcut
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+
+      "ALV'de alanları güncelleyelim.
+      LOOP AT gt_alv INTO ls_alv
+                     WHERE mblnr EQ ls_alv_tmp-mblnr.
+        ls_alv-light = icon_red_light.
+        ls_alv-text  = ls_return-message.
+        MODIFY gt_alv FROM ls_alv.
+      ENDLOOP.
+    ELSEIF sy-subrc <> 0."başarılı
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING
+          wait = abap_true.
+*      COMMIT WORK AND WAIT .
+
+      "Warte darauf, dass es in die Datenbank geschrieben wird.
+*    wait UP TO 1 SECONDS.
+      DATA(lv_wait) = 0.
+      DO.
+        WAIT UP TO 1 SECONDS.
+
+        lv_wait = lv_wait + 1.
+        SELECT SINGLE mblnr
+          FROM mkpf
+          INTO @DATA(lv_mblnr)
+        WHERE mblnr EQ @lv_document.
+        IF sy-subrc = 0.
+          EXIT.
+        ENDIF.
+        IF lv_wait = 10.
+          EXIT.
+        ENDIF.
+      ENDDO.
+
+      " "Aktualisieren die Felder in ALV.
+      LOOP AT gt_alv INTO ls_alv
+                      WHERE mblnr EQ ls_alv_tmp-mblnr.
+        ls_alv-light = icon_green_light.
+        ls_alv-mblnr = lv_document.
+        ls_alv-text  = 'Das Dokument wurde erstellt.'.
+        MODIFY gt_alv FROM ls_alv.
+      ENDLOOP.
+    ENDIF.
+  ENDLOOP.
+  CALL METHOD cl_gui_cfw=>flush.
+  CALL METHOD gr_alv_grid->refresh_table_display
+* EXPORTING
+* IS_STABLE =
+* I_SOFT_REFRESH =
+    EXCEPTIONS
+      finished = 1
+      OTHERS   = 2.
+  IF sy-subrc <> 0.
+*--Exception handling
+  ENDIF.
+
+ENDFORM.
