@@ -30,37 +30,6 @@ DATA : gt_data TYPE TABLE OF ty_data,
        gs_data TYPE ty_data.
 
 
-" Alternativen
-*TYPES: BEGIN OF gty_alv,
-*         light TYPE icon-id,
-*         banfn TYPE  banfn,
-*         bnfpo TYPE  bnfpo,
-*         ekgrp TYPE  ekgrp,
-*         matnr TYPE  matnr,
-*         werks TYPE  ewerk,
-*         lgort TYPE  lgort_d,
-*         menge TYPE  bamng,
-*         meins TYPE  bamei,
-*         badat TYPE  badat,
-*         lfdat TYPE  eindt,
-*         text  TYPE char200,
-*       END OF gty_alv.
-
-*TYPES: BEGIN OF gty_table,
-*         Belegnummer                   TYPE  int1,
-*         Artıkel                       TYPE  int1,
-*         Eınkaufsgruppe                TYPE  char20,
-*         Material                      TYPE  char20,
-*         Herstellungsort               TYPE  char20,
-*         Lagerort                      TYPE  char20,
-*         Menge                         TYPE  numc4,
-*         Einheit                       TYPE  char3,
-*         Anforderungsdatum             TYPE  datum,
-*         Voraussichtliches_Lieferdatum TYPE  datum,
-*       END OF gty_table.
-
-
-
 DATA: BEGIN OF gs_header,
         name TYPE c LENGTH 30,
       END OF gs_header.
@@ -142,15 +111,6 @@ AT SELECTION-SCREEN.
     APPEND 'Anforderungsdatum'              TO gt_header.
     APPEND 'Voraussichtliches Lieferdatum'  TO gt_header.
 
-*
-*    "Alternative
-*    gt_header = VALUE #( ( name = 'Belegnummer'       ) ( name = 'Artıkel')
-*                         ( name = 'Eınkaufsgruppe'    ) ( name = 'Material')
-*                         ( name = 'Herstellungsort'   ) ( name = 'Lagerort')
-*                         ( name = 'Menge'             ) ( name = 'Einheit')
-*                         ( name = 'Anforderungsdatum' ) ( name = 'Voraussichtliches Lieferdatum') ).
-
-
 
     " Methode, mit der das Programm einen Dateipfad auswählen und importieren kann
     DATA: lv_fname    TYPE string,
@@ -218,36 +178,11 @@ AT SELECTION-SCREEN.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR  p_file.
   CALL FUNCTION 'F4_FILENAME'
-*   EXPORTING
-*     PROGRAM_NAME        = SYST-CPROG
-*     DYNPRO_NUMBER       = SYST-DYNNR
-*     FIELD_NAME          = ' '
     IMPORTING
     file_name = p_file.
 
 
 START-OF-SELECTION.
-
-  " Ermitteln der Erweiterung der eingegebenen Datei (TXT_TO_SAP)
-*  DATA: gt_row   TYPE truxs_t_text_data,
-*        lv_fname TYPE rlgrap-filename.
-*
-*  lv_fname = p_file.
-*CALL FUNCTION 'TEXT_CONVERT_TXT_TO_SAP'
-*  EXPORTING
-**   I_FIELD_SEPERATOR          = ';'
-*   I_LINE_HEADER              = 'x'
-*    i_tab_raw_data             = gt_row[]
-*   I_FILENAME                 = lv_fname
-*  tables
-*    i_tab_converted_data       = gt_data[]
-* EXCEPTIONS
-*   CONVERSION_FAILED          = 1
-*   OTHERS                     = 2 .
-*
-*  IF sy-subrc IS INITIAL.
-*    MESSAGE 'Excel-Datei konnte nicht geladen werden.' TYPE 'S' DISPLAY LIKE 'E'.
-*  ENDIF.
 
   " Ermitteln der Erweiterung der eingegebenen Datei (XLS_TO_SAP)
   DATA: gt_row   TYPE truxs_t_text_data,
@@ -256,7 +191,6 @@ START-OF-SELECTION.
   lv_fname = p_file.
 
 
-  " Erste Methode
   CLEAR gt_data[].
   CALL FUNCTION 'TEXT_CONVERT_XLS_TO_SAP'
     EXPORTING
@@ -275,117 +209,6 @@ START-OF-SELECTION.
   ENDIF.
 
 
-  " Zweite Methode (EXCEL_TO_SAP)
-*  DATA: gt_itab TYPE TABLE OF alsmex_tabline.
-
-*  CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
-*    EXPORTING
-*      filename                = lv_fname
-*      i_begin_col             = '1'
-*      i_begin_row             = '2'
-*      i_end_col               = '10'
-*      i_end_row               = '65536'
-*    TABLES
-*      intern                  = gt_itab[]
-*    EXCEPTIONS
-*      inconsistent_parameters = 1
-*      upload_ole              = 2
-*      OTHERS                  = 3.
-*
-*  IF sy-subrc IS NOT INITIAL.
-*    MESSAGE 'Excel-Datei konnte nicht geladen werden.' TYPE 'S' DISPLAY LIKE 'E'.
-*  ENDIF.
-*
-*  LOOP AT gt_itab INTO DATA(ls_data).
-*    ASSIGN COMPONENT ls_data-col OF STRUCTURE gs_data TO FIELD-SYMBOL(<lfs_fld>).
-*
-*    <lfs_fld> = ls_data-value.
-*    AT END OF row.
-*      APPEND gs_data TO gt_data.
-*    ENDAT.
-*  ENDLOOP.
-
-
-  " Dritte Methode  (EXCEL_TO_SAP)
-*  DATA : lv_filename      TYPE string,
-*         lt_records       TYPE solix_tab,
-*         lv_headerxstring TYPE xstring,
-*         lv_filelength    TYPE i.
-*
-*  lv_filename = p_file.
-*
-*  CALL FUNCTION 'GUI_UPLOAD'
-*    EXPORTING
-*      filename                = lv_filename
-*      filetype                = 'BIN'
-**      has_field_separator     = 'X'
-*    IMPORTING
-*      filelength              = lv_filelength
-*      header                  = lv_headerxstring
-*    TABLES
-*      data_tab                = lt_records[]
-*    EXCEPTIONS
-*      file_open_error         = 1
-*      file_read_error         = 2
-*      no_batch                = 3
-*      gui_refuse_filetransfer = 4
-*      invalid_type            = 5
-*      no_authority            = 6
-*      unknown_error           = 7
-*      bad_data_format         = 8
-*      header_not_allowed      = 9
-*      separator_not_allowed   = 10
-*      header_too_long         = 11
-*      unknown_dp_error        = 12
-*      access_denied           = 13
-*      dp_out_of_memory        = 14
-*      disk_full               = 15
-*      dp_timeout              = 16
-*      OTHERS                  = 17.
-*
-*  CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
-*    EXPORTING
-*      input_length = lv_filelength
-*    IMPORTING
-*      buffer       = lv_headerxstring
-*    TABLES
-*      binary_tab   = lt_records
-*    EXCEPTIONS
-*      failed       = 1
-*      OTHERS       = 2.
-*
-*  IF sy-subrc <> 0.
-*    "Implement suitable error handling here
-*  ENDIF.
-*
-*  DATA : lo_excel_ref TYPE REF TO cl_fdt_xl_spreadsheet .
-*
-*  TRY .
-*      lo_excel_ref = NEW cl_fdt_xl_spreadsheet(
-*                              document_name = lv_filename
-*                              xdocument     = lv_headerxstring ) .
-*    CATCH cx_fdt_excel_core.
-*      "Implement suitable error handling here
-*  ENDTRY .
-*
-*  "Get List of Worksheets
-*  lo_excel_ref->if_fdt_doc_spreadsheet~get_worksheet_names(
-*    IMPORTING
-*      worksheet_names = DATA(lt_worksheets) ).
-*
-*  IF NOT lt_worksheets IS INITIAL.
-*    READ TABLE lt_worksheets INTO DATA(lv_woksheetname) INDEX 1.
-*
-*    DATA(lo_data_ref) = lo_excel_ref->if_fdt_doc_spreadsheet~get_itab_from_worksheet(
-*                                             lv_woksheetname ).
-*    "now you have excel work sheet data in dyanmic internal table
-*    ASSIGN lo_data_ref->* TO <gt_data>.
-*  ENDIF.
-*
-*  BREAK-POINT.
-
-*******************************************************************************
- 
 
   PERFORM selec_data.
   CALL SCREEN 100.
@@ -581,22 +404,6 @@ ENDFORM.
 *----------------------------------------------------------------------*
 FORM show_data .
   IF gr_alv_grid IS INITIAL.
-    " Custom Container
-*    custom grid
-*    create object gr_ccontainer
-*      exporting
-*        container_name              = gc_custom_control_name
-*      exceptions
-*        cntl_error                  = 1
-*        cntl_system_error           = 2
-*        create_error                = 3
-*        lifetime_error              = 4
-*        lifetime_dynpro_dynpro_link = 5
-*        others                      = 6.
-*
-*    IF sy-subrc IS NOT INITIAL.
-*      MESSAGE '„CONTAINER“ konnte nicht erstellt werden.' TYPE 'S' DISPLAY LIKE 'E'.
-*    ENDIF.
 
     " Docker Container
     CREATE OBJECT gr_alv_container
